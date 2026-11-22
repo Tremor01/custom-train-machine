@@ -1,0 +1,8 @@
+{
+  "name": "custom-train-machine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "vite --host 127.0.0.1", "build": "vite build", "test": "node --test", "download-model": "node scripts/download-model.js" },
+  "dependencies": { "@tensorflow/tfjs": "^4.22.0", "@tensorflow-models/mobilenet": "^2.1.1", "vite": "^6.1.0" }
+}
