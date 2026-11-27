@@ -7,6 +7,7 @@ import { createMlService } from './ml-service.js';
 import { createJobStore } from './job-store.js';
 import { createModelStore } from './model-store.js';
 import { registerRoutes } from './routes.js';
+import { staticContentType } from './static-content.js';
 
 const directory = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const dataDirectory = resolve(process.env.DATA_DIR || join(directory, '..', 'data'));
@@ -38,8 +39,11 @@ if (process.env.NODE_ENV === 'production') {
   const relative = decodeURIComponent(request.url.split('?')[0]).replace(/^\/+/, '');
   const asset = resolve(dist, relative || 'index.html');
     if (!asset.startsWith(`${dist}/`) && asset !== join(dist, 'index.html')) return reply.code(404).send();
-    try { return reply.type(asset.endsWith('.js') ? 'text/javascript' : asset.endsWith('.css') ? 'text/css' : 'application/octet-stream').send(await readFile(asset)); }
-    catch { return reply.type('text/html').send(await readFile(join(dist, 'index.html'))); }
+    try { return reply.type(staticContentType(asset)).send(await readFile(asset)); }
+    catch {
+      if (relative.includes('.')) return reply.code(404).send();
+      return reply.type('text/html; charset=utf-8').send(await readFile(join(dist, 'index.html')));
+    }
   });
 }
 
