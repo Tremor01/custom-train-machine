@@ -2,6 +2,8 @@ import * as tf from '@tensorflow/tfjs';
 import { loadExtractor } from './model-loader.js';
 import { selectClass, validateClasses, gameRolesValid, gameOutcome, createGameLifecycle, createCameraStarter, createRestartableLoop, createTabState, validateProjectData, stopCameraStream, gamePreviewMove, buildConfusionMatrix } from './logic.js';
 import { createCaptureController } from './capture.js';
+import { loadServerHead as loadModelHead } from './model-head-loader.js';
+import { renderTrainingMetrics } from './metrics-chart.js';
 import './style.css';
 
 document.querySelector('#app').innerHTML = `
@@ -21,25 +23,11 @@ const gameLifecycle = createGameLifecycle();
 const tabState = createTabState();
 const predictionLoop = createRestartableLoop();
 const gameVideo = $('#game-video');
+function renderMetrics(metrics) {
+  renderTrainingMetrics(metrics, { accuracy: $('#accuracy-chart'), loss: $('#loss-chart'), labels: { accuracy: $('#accuracy-value'), loss: $('#loss-value') } });
+}
 async function loadServerHead() {
-  const base = `/api/models/${state.modelId}`;
-  const response = await fetch(`${base}/model.json`);
-  if (!response.ok) throw Error('Не удалось загрузить модель с сервера.');
-  const json = await response.json();
-  const groups = await Promise.all(json.weightsManifest.map(async group => {
-    const buffers = await Promise.all(group.paths.map(async path => {
-      const shard = await fetch(path, { headers: authHeaders() });
-      if (!shard.ok) throw Error('Не удалось загрузить веса модели.');
-      return new Uint8Array(await shard.arrayBuffer());
-    }));
-    return { specs: group.weights, buffers };
-  }));
-  const specs = groups.flatMap(group => group.specs);
-  const parts = groups.flatMap(group => group.buffers);
-  const weightData = new Uint8Array(parts.reduce((size, buffer) => size + buffer.length, 0));
-  let offset = 0;
-  for (const part of parts) { weightData.set(part, offset); offset += part.length; }
-  return tf.loadLayersModel(tf.io.fromMemory({ modelTopology: json.modelTopology, weightSpecs: specs, weightData: weightData.buffer }));
+  return loadModelHead({ modelId: state.modelId, fetch, tf });
 }
 const predictionCanvas = document.createElement('canvas'); predictionCanvas.width = predictionCanvas.height = 224;
 async function requestServerPrediction(video) {
@@ -189,7 +177,7 @@ function renderConfusionMatrix(validation) {
 }
 function readDataURL(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
 function loadImage(src) { return new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src; }); }
-const startCameraRequest = createCameraStarter(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }), async stream => { for (const video of [$('#video'), gameVideo]) video.srcObject = stream; await Promise.all([$('#video').play(), gameVideo.play()]); });
+const startCameraRequest = createCameraStarter(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }), async stream => { for (const video of [$('#video'), gameVideo]) video.srcObject = stream; await Promise.all([$('#video').play(), gameVideo.play()]); }, stream => { for (const video of [$('#video'), gameVideo]) if (video.srcObject === stream) video.srcObject = null; });
 async function startCamera() { if (state.stream) return; try { const stream = await startCameraRequest(); state.stream = stream; $('#camera-placeholder').hidden = true; $('#game-camera-placeholder').hidden = true; $('#camera').textContent = 'Выключить камеру'; $('#camera-game').textContent = 'Выключить камеру'; predictLoop(); } catch { if ($('#video').srcObject && !state.stream) { $('#video').srcObject = null; gameVideo.srcObject = null; } throw Error('Не удалось включить камеру. Проверьте разрешение браузера и подключение камеры.'); } }
 function stopCamera() {
   if (!state.stream) return;
@@ -255,13 +243,15 @@ async function loadClientModel() {
   if (!Array.isArray(manifest.classes) || manifest.classes.length !== state.classes.length) throw Error('Количество классов модели не совпадает с проектом.');
   state.model = await loadServerHead();
   state.classes = state.classes.map((item, index) => ({ ...item, ...manifest.classes[index], examples: item.examples }));
+  state.validation = manifest.validation || null;
+  renderConfusionMatrix(state.validation);
   renderClasses(); renderGameRoles();
   return state.model;
 }
 
 async function train() {
   if (!validateClasses(state.classes)) return notify('Добавьте хотя бы по одному изображению в каждый из двух или более классов.', true);
-  if (state.busy) return; capture.stop(); state.busy = true; $('#train').disabled = true; $('#add').disabled = true; $('#save').disabled = true; $('#classes').inert = true; $('#progress').value = 0; $('#charts').hidden = false; renderConfusionMatrix(null);
+  if (state.busy) return; capture.stop(); state.busy = true; $('#train').disabled = true; $('#add').disabled = true; $('#save').disabled = true; $('#classes').inert = true; $('#progress').value = 0; $('#charts').hidden = false; renderMetrics([]); renderConfusionMatrix(null);
   try {
     const form = new FormData();
     form.append('classes', JSON.stringify(state.classes.map(({ name, color, emoji, sound }) => ({ name, color, emoji, sound, examples: [] }))));
@@ -278,9 +268,10 @@ async function train() {
     const response = await fetch('/api/train', { method: 'POST', body: form });
     const submitted = await response.json(); if (!response.ok) throw Error(submitted.error || 'Не удалось начать обучение.');
     let job;
-    do { await new Promise(resolve => setTimeout(resolve, 500)); const status = await fetch(`/api/train/${submitted.jobId}`); job = await status.json(); $('#progress').value = job.progress || 0; notify(job.message || (job.phase === 'training' ? 'Обучение на сервере…' : 'Извлечение признаков на сервере…')); if (!status.ok) throw Error(job.error || 'Ошибка получения состояния обучения.'); } while (job.status === 'queued' || job.status === 'running');
+    do { await new Promise(resolve => setTimeout(resolve, 500)); const status = await fetch(`/api/train/${submitted.jobId}`); job = await status.json(); $('#progress').value = job.progress || 0; renderMetrics(job.metrics); notify(job.message || (job.phase === 'training' ? 'Обучение на сервере…' : 'Извлечение признаков на сервере…')); if (!status.ok) throw Error(job.error || 'Ошибка получения состояния обучения.'); } while (job.status === 'queued' || job.status === 'running');
+    renderMetrics(job.metrics);
     if (job.status !== 'completed') throw Error(job.error || 'Серверное обучение завершилось ошибкой.');
-    state.modelId = job.modelId; state.model?.dispose(); state.model = null; state.extractor = null; state.validation = null; $('#save').disabled = false; renderClasses(); renderGameRoles(); notify('Модель обучена на сервере. Выберите режим распознавания и включите камеру.'); updateGameReady();
+    state.modelId = job.modelId; state.model?.dispose(); state.model = null; state.validation = job.validation || null; renderConfusionMatrix(state.validation); $('#save').disabled = false; renderClasses(); renderGameRoles(); notify('Модель обучена на сервере. Выберите режим распознавания и включите камеру.'); updateGameReady();
   } catch (error) { notify(error.message, true); }
   finally { state.busy = false; $('#train').disabled = false; $('#add').disabled = false; $('#save').disabled = false; $('#classes').inert = false; }
 }

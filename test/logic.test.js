@@ -19,6 +19,11 @@ test('builds a confusion matrix from actual and predicted class indexes', () => 
   assert.deepEqual(buildConfusionMatrix([0, 0, 1], [0, 1, 1], 2), [[1, 1], [0, 1]]);
 });
 
+test('validation results generate the confusion counts shown after training', () => {
+  const validation = { actual: [0, 0, 1], predicted: [0, 1, 1] };
+  assert.deepEqual(buildConfusionMatrix(validation.actual, validation.predicted, 2), [[1, 1], [0, 1]]);
+});
+
 test('accepts projects with examples before training and legacy model files', () => {
   assert.deepEqual(validateProjectData({ format: 'custom-train-machine-v2', classes: [{ examples: [] }, { examples: ['data:image/png;base64,AA=='] }] }), { hasExamples: true, hasModel: false, exampleLimit: 200 });
   assert.deepEqual(validateProjectData({ format: 'custom-train-machine-v2', classes: [{ examples: [] }, { examples: [] }], exampleLimit: 350 }), { hasExamples: true, hasModel: false, exampleLimit: 350 });
@@ -110,6 +115,21 @@ test('camera starter shares pending request and stops stream if setup fails', as
   assert.equal(stopped, 1);
 });
 
+test('camera starter rolls back attached video elements when playback setup fails', async () => {
+  const videos = [{ srcObject: null }, { srcObject: null }];
+  let stopped = 0;
+  const stream = { getTracks: () => [{ stop() { stopped++; } }] };
+  const start = createCameraStarter(async () => stream, async value => {
+    videos.forEach(video => { video.srcObject = value; });
+    throw Error('play failed');
+  }, value => videos.forEach(video => { if (video.srcObject === value) video.srcObject = null; }));
+
+  await assert.rejects(start(), /play failed/);
+
+  assert.equal(stopped, 1);
+  assert.deepEqual(videos.map(video => video.srcObject), [null, null]);
+});
+
 test('tab state switches between training and game without discarding the current tab on invalid input', () => {
   const tabs = createTabState();
   assert.equal(tabs.current(), 'training');
@@ -164,10 +184,16 @@ test('main app defines a confusion matrix renderer for training and validation',
 });
 
 test('client model loader uses server-provided shard URL without prefixing it twice', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.match(source, /fetch\(path,\s*\{\s*headers:\s*authHeaders\(\)\s*\}\)/);
-  assert.doesNotMatch(source, /fetch\(`\$\{base\}\/\$\{encodeURIComponent\(path\)\}`/);
+  const { loadServerHead } = await import('../src/model-head-loader.js');
+  const urls = [];
+  const fetch = async url => {
+    urls.push(url);
+    return url.endsWith('/model.json')
+      ? { ok: true, json: async () => ({ modelTopology: {}, weightsManifest: [{ paths: ['/api/models/id/weights.bin'], weights: [] }] }) }
+      : { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  await loadServerHead({ modelId: 'id', fetch, tf: { io: { fromMemory: value => value }, loadLayersModel: async value => value } });
+  assert.deepEqual(urls, ['/api/models/id/model.json', '/api/models/id/weights.bin']);
 });
 
 test('prediction mode changes do not force-clear active loop state', async () => {
