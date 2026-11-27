@@ -7,7 +7,7 @@ import { createMlService } from './ml-service.js';
 import { createJobStore } from './job-store.js';
 import { createModelStore } from './model-store.js';
 import { registerRoutes } from './routes.js';
-import { staticContentType } from './static-content.js';
+import { isPathInside, staticContentType } from './static-content.js';
 
 const directory = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const dataDirectory = resolve(process.env.DATA_DIR || join(directory, '..', 'data'));
@@ -36,9 +36,11 @@ app.addHook('onReady', async () => {
 if (process.env.NODE_ENV === 'production') {
   const dist = join(directory, '..', 'dist');
   app.get('/*', async (request, reply) => {
-  const relative = decodeURIComponent(request.url.split('?')[0]).replace(/^\/+/, '');
-  const asset = resolve(dist, relative || 'index.html');
-    if (!asset.startsWith(`${dist}/`) && asset !== join(dist, 'index.html')) return reply.code(404).send();
+    let relative;
+    try { relative = decodeURIComponent(request.url.split('?')[0]).replace(/^\/+/, ''); }
+    catch { return reply.code(400).send(); }
+    const asset = resolve(dist, relative || 'index.html');
+    if (asset !== join(dist, 'index.html') && !isPathInside(dist, asset)) return reply.code(404).send();
     try { return reply.type(staticContentType(asset)).send(await readFile(asset)); }
     catch {
       if (relative.includes('.')) return reply.code(404).send();
