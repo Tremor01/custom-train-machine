@@ -21,15 +21,14 @@ const gameLifecycle = createGameLifecycle();
 const tabState = createTabState();
 const predictionLoop = createRestartableLoop();
 const gameVideo = $('#game-video');
-const authHeaders = () => ({ authorization: `Bearer ${state.apiToken}` });
 async function loadServerHead() {
   const base = `/api/models/${state.modelId}`;
-  const response = await fetch(`${base}/model.json`, { headers: authHeaders() });
+  const response = await fetch(`${base}/model.json`);
   if (!response.ok) throw Error('Не удалось загрузить модель с сервера.');
   const json = await response.json();
   const groups = await Promise.all(json.weightsManifest.map(async group => {
     const buffers = await Promise.all(group.paths.map(async path => {
-      const shard = await fetch(`${base}/${encodeURIComponent(path)}`, { headers: authHeaders() });
+      const shard = await fetch(`${base}/${encodeURIComponent(path)}`);
       if (!shard.ok) throw Error('Не удалось загрузить веса модели.');
       return new Uint8Array(await shard.arrayBuffer());
     }));
@@ -48,11 +47,11 @@ async function requestServerPrediction(video) {
   canvas.getContext('2d').drawImage(video, 0, 0, 224, 224);
   const image = canvas.toDataURL('image/jpeg', .75);
   const started = performance.now();
-  const response = await fetch(`/api/predict/${state.modelId}`, { method: 'POST', headers: { ...authHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ image }) });
+  const response = await fetch(`/api/predict/${state.modelId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }) });
   const result = await response.json(); if (!response.ok) throw Error(result.error || 'Ошибка серверного предсказания.');
   return { values: result.probabilities, elapsed: performance.now() - started };
 }
-const state = { classes: [], model: null, extractor: null, stream: null, active: -1, running: false, busy: false, predictionEnabled: true, game: null, validation: null, exampleLimit: 200, modelId: null, inferenceMode: 'client', apiToken: localStorage.getItem('api-token') || '' };
+const state = { classes: [], model: null, extractor: null, stream: null, active: -1, running: false, busy: false, predictionEnabled: true, game: null, validation: null, exampleLimit: 200, modelId: null, inferenceMode: 'client' };
 const colors = ['#7158dc', '#ed8b52', '#2b9d8f', '#dc5d83', '#4389c4'];
 const emojiChoices = ['😊', '🌟', '🌿', '🎈', '😀', '😎', '🤩', '😂', '😮', '😢', '😡', '❤️', '⭐', '🌈', '🔥', '🌸', '🍎', '🍋', '🐱', '🐶', '⚽', '🎮', '🚀', '✅', '❌', '✊', '✌️', '✋'];
 const gameMoves = ['✊', '✌️', '✋'];
@@ -222,7 +221,7 @@ async function extractor() {
 async function loadClientModel() {
   if (state.model) return state.model;
   if (!state.modelId) throw Error('Сначала обучите модель на сервере.');
-  const manifestResponse = await fetch(`/api/models/${state.modelId}/manifest.json`, { headers: authHeaders() });
+  const manifestResponse = await fetch(`/api/models/${state.modelId}/manifest.json`);
   const manifest = await manifestResponse.json(); if (!manifestResponse.ok) throw Error(manifest.error || 'Не найдены метаданные модели.');
   if (manifest.embeddingSize !== 1280 || manifest.extractor?.name !== 'mobilenet-v2' || manifest.extractor?.alpha !== 1) throw Error('Модель несовместима с клиентским MobileNet.');
   await extractor();
@@ -237,7 +236,6 @@ async function train() {
   if (!validateClasses(state.classes)) return notify('Добавьте хотя бы по одному изображению в каждый из двух или более классов.', true);
   if (state.busy) return; capture.stop(); state.busy = true; $('#train').disabled = true; $('#add').disabled = true; $('#save').disabled = true; $('#classes').inert = true; $('#progress').value = 0; $('#charts').hidden = false; renderConfusionMatrix(null);
   try {
-    if (!state.apiToken) { const token = prompt('Введите токен доступа к ML-серверу:'); if (!token) throw Error('Для серверного обучения нужен токен доступа.'); state.apiToken = token; localStorage.setItem('api-token', token); }
     const form = new FormData();
     form.append('classes', JSON.stringify(state.classes.map(({ name, color, emoji, sound }) => ({ name, color, emoji, sound, examples: [] }))));
     for (const [classIndex, item] of state.classes.entries()) {
@@ -250,10 +248,10 @@ async function train() {
       }
     }
     form.append('exampleCounts', JSON.stringify(state.classes.map(item => item.examples.length)));
-    const response = await fetch('/api/train', { method: 'POST', headers: { authorization: `Bearer ${state.apiToken}` }, body: form });
+    const response = await fetch('/api/train', { method: 'POST', body: form });
     const submitted = await response.json(); if (!response.ok) throw Error(submitted.error || 'Не удалось начать обучение.');
     let job;
-    do { await new Promise(resolve => setTimeout(resolve, 500)); const status = await fetch(`/api/train/${submitted.jobId}`, { headers: { authorization: `Bearer ${state.apiToken}` } }); job = await status.json(); $('#progress').value = job.progress || 0; notify(job.message || (job.phase === 'training' ? 'Обучение на сервере…' : 'Извлечение признаков на сервере…')); if (!status.ok) throw Error(job.error || 'Ошибка получения состояния обучения.'); } while (job.status === 'queued' || job.status === 'running');
+    do { await new Promise(resolve => setTimeout(resolve, 500)); const status = await fetch(`/api/train/${submitted.jobId}`); job = await status.json(); $('#progress').value = job.progress || 0; notify(job.message || (job.phase === 'training' ? 'Обучение на сервере…' : 'Извлечение признаков на сервере…')); if (!status.ok) throw Error(job.error || 'Ошибка получения состояния обучения.'); } while (job.status === 'queued' || job.status === 'running');
     if (job.status !== 'completed') throw Error(job.error || 'Серверное обучение завершилось ошибкой.');
     state.modelId = job.modelId; state.model?.dispose(); state.model = null; state.extractor = null; state.validation = null; $('#save').disabled = false; renderClasses(); renderGameRoles(); notify('Модель обучена на сервере. Выберите режим распознавания и включите камеру.'); updateGameReady();
   } catch (error) { notify(error.message, true); }
