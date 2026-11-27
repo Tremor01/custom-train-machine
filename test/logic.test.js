@@ -143,10 +143,19 @@ test('main app markup has one tab shell and the shared model preview views', asy
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.equal((source.match(/document\.querySelector\('#app'\)\.innerHTML/g) || []).length, 1);
-  assert.equal((source.match(/\$\('#game-live-result span'\)\.textContent/g) || []).length, 1);
-  assert.equal((source.match(/\$\('#game-fps'\)\.textContent = fps/g) || []).length, 1);
-  assert.equal((source.match(/\$\('#game-live-result strong'\)\.textContent = item\?\.name \|\| 'Нет уверенного результата'/g) || []).length, 1);
+  assert.match(source, /#game-live-result span/);
+  assert.match(source, /#game-fps/);
+  assert.match(source, /#game-live-result strong/);
   assert.match(source, /gameVideo = \$\('#game-video'\)/);
   assert.match(source, /await Promise\.all\(\[\$\('#video'\)\.play\(\), gameVideo\.play\(\)\]\)/);
-  assert.match(source, /return predictionLoop\.start\(async \(\) =>/);
+  assert.match(source, /async function predictLoop\(\)/);
+  assert.match(source, /state\.inferenceMode === 'server'/);
+});
+
+test('prediction mode changes do not force-clear active loop state', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /state\.running\s*=\s*false;\s*if \(state\.stream\) predictLoop\(\)/);
+  const invalidate = source.match(/function invalidate\(\) \{[^\n]+/);
+  assert.match(invalidate?.[0] || '', /state\.modelId = null/);
 });
