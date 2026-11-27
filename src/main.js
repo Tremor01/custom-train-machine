@@ -271,7 +271,7 @@ async function train() {
     do { await new Promise(resolve => setTimeout(resolve, 500)); const status = await fetch(`/api/train/${submitted.jobId}`); job = await status.json(); $('#progress').value = job.progress || 0; renderMetrics(job.metrics); notify(job.message || (job.phase === 'training' ? 'Обучение на сервере…' : 'Извлечение признаков на сервере…')); if (!status.ok) throw Error(job.error || 'Ошибка получения состояния обучения.'); } while (job.status === 'queued' || job.status === 'running');
     renderMetrics(job.metrics);
     if (job.status !== 'completed') throw Error(job.error || 'Серверное обучение завершилось ошибкой.');
-    state.modelId = job.modelId; state.model?.dispose(); state.model = null; state.validation = job.validation || null; renderConfusionMatrix(state.validation); $('#save').disabled = false; renderClasses(); renderGameRoles(); notify('Модель обучена на сервере. Выберите режим распознавания и включите камеру.'); updateGameReady();
+    state.modelId = job.modelId; state.model?.dispose(); state.model = null; state.validation = job.validation || null; renderConfusionMatrix(state.validation); $('#save').disabled = false; renderClasses(); renderGameRoles(); notify('Модель обучена на сервере. Выберите режим распознавания.'); updateGameReady(); if (state.stream && state.predictionEnabled) predictLoop();
   } catch (error) { notify(error.message, true); }
   finally { state.busy = false; $('#train').disabled = false; $('#add').disabled = false; $('#save').disabled = false; $('#classes').inert = false; }
 }

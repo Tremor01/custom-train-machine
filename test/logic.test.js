@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { selectClass, validateClasses, gameRolesValid, gameOutcome, createGameLifecycle, createCameraStarter, createTabState, createRestartableLoop, splitExamples, buildConfusionMatrix, validateProjectData, stopCameraStream, gamePreviewMove } from '../src/logic.js';
 
 test('splits examples by class and keeps singleton classes in training', () => {
@@ -202,4 +203,37 @@ test('prediction mode changes do not force-clear active loop state', async () =>
   assert.doesNotMatch(source, /state\.running\s*=\s*false;\s*if \(state\.stream\) predictLoop\(\)/);
   const invalidate = source.match(/function invalidate\(\) \{[^\n]+/);
   assert.match(invalidate?.[0] || '', /state\.modelId = null/);
+});
+
+test('successful training starts prediction only when camera and recognition are enabled', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  const trainSource = source.match(/async function train\(\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(trainSource, 'train() should be extractable for behavior testing');
+
+  async function runTrain({ stream, predictionEnabled = true, outcome = 'completed' }) {
+    let starts = 0;
+    const state = { classes: [{ examples: ['data:image/png;base64,AA=='] }, { examples: ['data:image/png;base64,AA=='] }], busy: false, modelId: null, model: null, validation: null, stream, predictionEnabled, running: false };
+    const elements = new Map();
+    const $ = selector => {
+      if (!elements.has(selector)) elements.set(selector, { disabled: false, inert: false, value: 0, hidden: false });
+      return elements.get(selector);
+    };
+    const context = {
+      state, $, validateClasses: () => true, capture: { stop() {} }, FormData: class { append() {} },
+      atob: () => 'x', Uint8Array, Blob: class {}, setTimeout: callback => { callback(); return 0; },
+      fetch: async url => url === '/api/train'
+        ? { ok: true, json: async () => ({ jobId: 'job' }) }
+        : { ok: true, json: async () => outcome === 'completed' ? { status: 'completed', modelId: 'trained-model' } : { status: 'failed', error: 'training failed' } },
+      renderMetrics() {}, renderConfusionMatrix() {}, renderClasses() {}, renderGameRoles() {}, updateGameReady() {},
+      notify() {}, predictLoop() { starts++; },
+    };
+    await vm.runInNewContext(`(${trainSource})()`, context);
+    return { starts, state };
+  }
+
+  assert.equal((await runTrain({ stream: {} })).starts, 1, 'camera already on should start prediction');
+  assert.equal((await runTrain({ stream: null })).starts, 0, 'camera-off training must not open or start camera');
+  assert.equal((await runTrain({ stream: {}, predictionEnabled: false })).starts, 0, 'manual stop must remain respected');
+  assert.equal((await runTrain({ stream: {}, outcome: 'failed' })).starts, 0, 'failed training must not start prediction');
 });
