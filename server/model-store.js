@@ -60,7 +60,10 @@ export function createModelStore(root) {
       const temporaryActive = join(root, `.active-${id}.tmp`);
       await writeFile(temporaryActive, JSON.stringify({ id }));
       try { await rename(temporaryActive, activeFile); }
-      catch (error) { await rm(temporaryActive, { force: true }); throw error; }
+      catch (error) {
+        await rm(temporaryActive, { force: true });
+        throw error;
+      }
     },
     async deactivate() { await rm(activeFile, { force: true }); },
     async discard(id) { if (isId(id) && id !== await this.activeId()) await rm(join(root, id), { recursive: true, force: true }); },
