@@ -152,6 +152,17 @@ test('main app markup has one tab shell and the shared model preview views', asy
   assert.match(source, /state\.inferenceMode === 'server'/);
 });
 
+test('main app defines a confusion matrix renderer for training and validation', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.match(source, /function renderConfusionMatrix\(validation\)/);
+  assert.match(source, /renderConfusionMatrix\(null\)/);
+  assert.match(source, /buildConfusionMatrix/);
+  assert.match(source, /#confusion-section/);
+  assert.match(source, /#confusion-note/);
+  assert.match(source, /#confusion-matrix/);
+});
+
 test('prediction mode changes do not force-clear active loop state', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');

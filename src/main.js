@@ -1,6 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
 import { loadExtractor } from './model-loader.js';
-import { selectClass, validateClasses, gameRolesValid, gameOutcome, createGameLifecycle, createCameraStarter, createRestartableLoop, createTabState, validateProjectData, stopCameraStream, gamePreviewMove } from './logic.js';
+import { selectClass, validateClasses, gameRolesValid, gameOutcome, createGameLifecycle, createCameraStarter, createRestartableLoop, createTabState, validateProjectData, stopCameraStream, gamePreviewMove, buildConfusionMatrix } from './logic.js';
 import { createCaptureController } from './capture.js';
 import './style.css';
 
@@ -159,6 +159,33 @@ function renderClasses() {
     el('.images').onchange = async e => { for (const file of e.target.files) { if (item.examples.length >= state.exampleLimit) { notify(`Достигнут лимит ${state.exampleLimit} примеров в классе.`, true); break; } try { const data = await readDataURL(file); await loadImage(data); item.examples.push(data); } catch { notify(`Не удалось открыть изображение «${file.name}».`, true); } } invalidate(); renderClasses(); };
     root.append(card);
   });
+}
+function renderConfusionMatrix(validation) {
+  const section = $('#confusion-section');
+  const table = $('#confusion-matrix');
+  const note = $('#confusion-note');
+  table.replaceChildren();
+  if (!validation?.actual?.length || !validation?.predicted?.length) {
+    section.hidden = true;
+    note.textContent = '';
+    return;
+  }
+
+  const matrix = buildConfusionMatrix(validation.actual, validation.predicted, state.classes.length);
+  const header = document.createElement('tr');
+  header.append(document.createElement('th'));
+  state.classes.forEach(item => {
+    const cell = document.createElement('th'); cell.textContent = item.name; header.append(cell);
+  });
+  table.append(header);
+  matrix.forEach((row, index) => {
+    const line = document.createElement('tr');
+    const label = document.createElement('th'); label.scope = 'row'; label.textContent = state.classes[index].name; line.append(label);
+    row.forEach(count => { const cell = document.createElement('td'); cell.textContent = String(count); line.append(cell); });
+    table.append(line);
+  });
+  note.textContent = 'Строки — правильный класс, столбцы — предсказанный. Показаны примеры отложенной проверки.';
+  section.hidden = false;
 }
 function readDataURL(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
 function loadImage(src) { return new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src; }); }
