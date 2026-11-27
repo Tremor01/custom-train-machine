@@ -2,7 +2,7 @@ import * as browserTf from '@tensorflow/tfjs';
 import * as mobilenet from '@tensorflow-models/mobilenet';
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parentPort } from 'node:worker_threads';
+import { parentPort, workerData } from 'node:worker_threads';
 import { pathToFileURL } from 'node:url';
 import { normalizeImage } from './image-input.js';
 import { splitExamples } from '../src/logic.js';
@@ -46,7 +46,8 @@ function send(id, type, payload) { parentPort.postMessage({ id, type, [type === 
 async function tensorFromImage(buffer) {
   const image = await normalizeImage(buffer);
   const tf = await getTensorFlow();
-  return tf.tensor4d(image.values, [1, image.height, image.width, 3]);
+  const pixels = Float32Array.from(image.values, value => value * 255);
+  return tf.tensor4d(pixels, [1, image.height, image.width, 3]);
 }
 
 async function train(payload, id) {
@@ -56,6 +57,8 @@ async function train(payload, id) {
   const split = splitExamples(classes);
   const training = [], validation = [], labels = [], validationLabels = [];
   const all = [...split.training.map(x => ({ ...x, validation: false })), ...split.validation.map(x => ({ ...x, validation: true }))];
+  let xs, ys, validationXs, validationYs, model, optimizer;
+  try {
   for (let i = 0; i < all.length; i++) {
     const sample = all[i];
     const buffer = await readFile(sample.example);
@@ -68,19 +71,40 @@ async function train(payload, id) {
     send(id, 'progress', { phase: 'features', progress: Math.round((i + 1) * 100 / all.length), message: `Извлечение признаков ${i + 1}/${all.length}` });
   }
   if (!training.length) { validation.forEach(tensor => tensor.dispose()); throw new Error('Not enough examples to train; each class needs at least two images.'); }
-  const xs = tf.stack(training), ys = tf.oneHot(tf.tensor1d(labels, 'int32'), classes.length);
-  const validationXs = validation.length ? tf.stack(validation) : null;
-  const validationYs = validation.length ? tf.oneHot(tf.tensor1d(validationLabels, 'int32'), classes.length) : null;
-  const model = tf.sequential();
+  xs = tf.stack(training);
+  const labelTensor = tf.tensor1d(labels, 'int32');
+  try { ys = tf.oneHot(labelTensor, classes.length); } finally { labelTensor.dispose(); }
+  validationXs = validation.length ? tf.stack(validation) : null;
+  if (validation.length) {
+    const validationLabelTensor = tf.tensor1d(validationLabels, 'int32');
+    try { validationYs = tf.oneHot(validationLabelTensor, classes.length); } finally { validationLabelTensor.dispose(); }
+  }
+  model = tf.sequential();
   model.add(tf.layers.dense({ inputShape: [1280], units: 64, activation: 'relu' }));
   model.add(tf.layers.dense({ units: classes.length, activation: 'softmax' }));
-  model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+  optimizer = tf.train.adam(0.001);
+  model.compile({ optimizer, loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
   try {
     const metrics = [];
     await model.fit(xs, ys, { epochs: 25, batchSize: Math.min(16, labels.length), shuffle: true, ...(validationXs ? { validationData: [validationXs, validationYs] } : {}), callbacks: { onEpochEnd: async (epoch, values) => { const item = { epoch: epoch + 1, loss: values.loss, accuracy: values.acc ?? values.accuracy, valLoss: values.val_loss, valAccuracy: values.val_acc ?? values.val_accuracy }; metrics.push(item); send(id, 'progress', { phase: 'training', progress: Math.round((epoch + 1) * 100 / 25), metrics, message: `Обучение: эпоха ${epoch + 1}/25` }); } } });
-    return { model, classes, metrics, counts: classes.map((_, i) => validationLabels.filter(label => label === i).length) };
+    let validationResult = null;
+    if (validationXs) {
+      const validationOutput = model.predict(validationXs);
+      const predictedTensor = validationOutput.argMax(1);
+      try {
+        validationResult = { actual: validationLabels, predicted: Array.from(await predictedTensor.data()) };
+      } finally {
+        predictedTensor.dispose();
+        validationOutput.dispose();
+      }
+    }
+    return { model, classes, metrics, counts: classes.map((_, i) => validationLabels.filter(label => label === i).length), validation: validationResult };
   } catch (error) { model.dispose(); throw error; }
-  finally { xs.dispose(); ys.dispose(); validationXs?.dispose(); validationYs?.dispose(); training.forEach(t => t.dispose()); validation.forEach(t => t.dispose()); }
+  } finally {
+    xs?.dispose(); ys?.dispose(); validationXs?.dispose(); validationYs?.dispose();
+    training.forEach(t => t.dispose()); validation.forEach(t => t.dispose());
+    optimizer?.dispose();
+  }
 }
 
 async function predict(payload) {
@@ -89,8 +113,11 @@ async function predict(payload) {
   const base = await getExtractor();
   const input = await tensorFromImage(payload.image);
   let output;
-  try { output = await tf.tidy(() => active.model.predict(base.infer(input, true))).data(); }
-  finally { input.dispose(); }
+  try {
+    const result = tf.tidy(() => active.model.predict(base.infer(input, true)));
+    try { output = await result.data(); }
+    finally { result.dispose(); }
+  } finally { input.dispose(); }
   return { classes: active.classes, probabilities: Array.from(output) };
 }
 
@@ -111,7 +138,7 @@ async function run(message) {
         return { modelArtifactsInfo: tf.io.getModelArtifactsInfoForJSON(artifacts) };
       });
       await next.model.save(saveHandler);
-      const manifest = { classes: next.classes.map(({ name, color, emoji, sound }) => ({ name, color, emoji, sound })), extractor: { name: 'mobilenet-v2', alpha: 1, inputRange: [0, 1] }, input: { width: 224, height: 224, channels: 3 }, embeddingSize: 1280, metrics: next.metrics, counts: next.counts, artifactFormat: tfNodeAvailable ? 'file' : 'memory' };
+      const manifest = { classes: next.classes.map(({ name, color, emoji, sound }) => ({ name, color, emoji, sound })), extractor: { name: 'mobilenet-v2', alpha: 1, inputRange: [0, 1] }, input: { width: 224, height: 224, channels: 3 }, embeddingSize: 1280, metrics: next.metrics, counts: next.counts, validation: next.validation, artifactFormat: tfNodeAvailable ? 'file' : 'memory' };
       await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest));
       next.model.dispose();
       return manifest;
@@ -138,5 +165,9 @@ async function run(message) {
 }
 
 parentPort.on('message', message => {
+  if (workerData?.testTensorStats === true && message.type === '__test-tensor-count') {
+    getTensorFlow().then(tf => parentPort.postMessage({ id: message.id, type: 'result', result: tf.memory().numTensors })).catch(error => parentPort.postMessage({ id: message.id, type: 'error', error: error.message }));
+    return;
+  }
   queued = queued.then(() => run(message)).then(result => send(message.id, 'result', result)).catch(error => parentPort.postMessage({ id: message.id, type: 'error', error: error.message }));
 });
