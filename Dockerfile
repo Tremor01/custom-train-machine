@@ -14,6 +14,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public/models ./public/models
 COPY server ./server
+COPY scripts/diagnose-ml.js ./scripts/diagnose-ml.js
 COPY src/logic.js ./src/logic.js
 RUN mkdir -p /data/models /data/jobs && chown -R node:node /app /data
 USER node
