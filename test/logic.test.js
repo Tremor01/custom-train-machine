@@ -163,6 +163,13 @@ test('main app defines a confusion matrix renderer for training and validation',
   assert.match(source, /#confusion-matrix/);
 });
 
+test('client model loader uses server-provided shard URL without prefixing it twice', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  assert.match(source, /fetch\(path,\s*\{\s*headers:\s*authHeaders\(\)\s*\}\)/);
+  assert.doesNotMatch(source, /fetch\(`\$\{base\}\/\$\{encodeURIComponent\(path\)\}`/);
+});
+
 test('prediction mode changes do not force-clear active loop state', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');

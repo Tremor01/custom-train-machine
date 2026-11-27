@@ -28,7 +28,7 @@ async function loadServerHead() {
   const json = await response.json();
   const groups = await Promise.all(json.weightsManifest.map(async group => {
     const buffers = await Promise.all(group.paths.map(async path => {
-      const shard = await fetch(`${base}/${encodeURIComponent(path)}`);
+      const shard = await fetch(path, { headers: authHeaders() });
       if (!shard.ok) throw Error('Не удалось загрузить веса модели.');
       return new Uint8Array(await shard.arrayBuffer());
     }));
