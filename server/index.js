@@ -10,9 +10,6 @@ import { registerRoutes } from './routes.js';
 
 const directory = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const dataDirectory = resolve(process.env.DATA_DIR || join(directory, '..', 'data'));
-const token = process.env.APP_TOKEN;
-if (process.env.NODE_ENV === 'production' && (!token || token.length < 24)) throw new Error('APP_TOKEN must contain at least 24 characters in production.');
-
 await mkdir(join(dataDirectory, 'models'), { recursive: true });
 await mkdir(join(dataDirectory, 'jobs'), { recursive: true });
 const app = Fastify({ bodyLimit: 70 * 1024 * 1024, logger: true });
@@ -20,7 +17,7 @@ await app.register(multipart, { limits: { files: 4000, fileSize: 6 * 1024 * 1024
 const ml = createMlService();
 const jobs = createJobStore();
 const models = createModelStore(join(dataDirectory, 'models'));
-await registerRoutes(app, { ml, jobs, models, dataDirectory, token });
+await registerRoutes(app, { ml, jobs, models, dataDirectory });
 
 const activeId = await models.activeId();
 app.addHook('onReady', async () => {

@@ -2,20 +2,13 @@ import { readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateJpegDataUrl } from './image-input.js';
 
-export async function registerRoutes(app, { ml, jobs, models, dataDirectory, token }) {
+export async function registerRoutes(app, { ml, jobs, models, dataDirectory }) {
   app.get('/api/health', async () => ({ ok: true }));
   app.setErrorHandler((error, request, reply) => {
     const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     request.log.error({ error }, 'API request failed');
     reply.code(status).send({ error: status === 500 ? 'Internal server error.' : error.message });
   });
-  app.addHook('preHandler', async (request, reply) => {
-    if (request.url !== '/api/health' && request.url.startsWith('/api/')) {
-      const queryToken = new URL(request.url, 'http://local').searchParams.get('token');
-      if (!token || (request.headers.authorization !== `Bearer ${token}` && queryToken !== token)) return reply.code(401).send({ error: 'Unauthorized' });
-    }
-  });
-
   app.post('/api/train', { bodyLimit: 70 * 1024 * 1024 }, async (request, reply) => {
     let job;
     let inputDirectory;
@@ -119,7 +112,6 @@ export async function registerRoutes(app, { ml, jobs, models, dataDirectory, tok
   app.get('/api/models/:modelId/:shard', async (request, reply) => {
     const path = models.artifactPath(request.params.modelId, request.params.shard);
     if (!path || !request.params.shard.endsWith('.bin')) return reply.code(404).send({ error: 'Artifact not found.' });
-    if (request.headers.authorization !== `Bearer ${token}`) return reply.code(401).send({ error: 'Unauthorized' });
     try { reply.header('Cache-Control', 'public, max-age=31536000, immutable').type('application/octet-stream'); return await readFile(path); }
     catch { return reply.code(404).send({ error: 'Artifact not found.' }); }
   });
