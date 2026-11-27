@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -10,6 +12,11 @@ const contentTypes = {
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
 };
+
+export function isPathInside(root, candidate, paths = path) {
+  const relative = paths.relative(root, candidate);
+  return relative !== '' && !paths.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${paths.sep}`);
+}
 
 export function staticContentType(path) {
   const extension = path.slice(path.lastIndexOf('.')).toLowerCase();
