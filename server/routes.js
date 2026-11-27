@@ -20,7 +20,10 @@ export async function registerRoutes(app, { ml, jobs, models, dataDirectory }) {
       const fields = {};
       const imagePaths = [];
       let totalBytes = 0;
-      if (!request.isMultipart()) return reply.code(415).send({ error: 'Training requires multipart uploads.' });
+      if (!request.isMultipart()) {
+        jobs.update(job.id, { status: 'failed', error: 'Training requires multipart uploads.' });
+        return reply.code(415).send({ error: 'Training requires multipart uploads.' });
+      }
       for await (const part of request.parts()) {
         if (part.type === 'field') {
           if (typeof part.value !== 'string' || part.value.length > 256 * 1024) throw new Error('Invalid form field.');
@@ -63,18 +66,30 @@ export async function registerRoutes(app, { ml, jobs, models, dataDirectory }) {
           try {
             await models.activate(modelId);
             await ml.activateModel({ modelPath: join(modelDirectory, 'model.json'), modelDirectory, classes: result.classes });
-            jobs.update(jobId, { status: 'completed', modelId, metrics: result.metrics });
+            jobs.update(jobId, { status: 'completed', modelId, metrics: result.metrics, validation: result.validation ?? null });
           } catch (error) {
-            if (previousId) await models.activate(previousId);
-            else await models.deactivate();
-            await models.discard(modelId);
+            try {
+              if (previousId) await models.activate(previousId);
+              else await models.deactivate();
+            } catch (rollbackError) { request.log.error({ error: rollbackError }, 'Failed to restore the active model'); }
+            try { await models.discard(modelId); }
+            catch (cleanupError) { request.log.error({ error: cleanupError }, 'Failed to discard model version'); }
             throw error;
           }
         })
-        .catch(async error => { await models.removeVersion(modelId); jobs.update(jobId, { status: 'failed', error: error.message }); })
+        .catch(async error => {
+          try { await models.removeVersion(modelId); }
+          catch (cleanupError) { request.log.error({ error: cleanupError }, 'Failed to clean up model version'); }
+          jobs.update(jobId, { status: 'failed', error: error.message });
+        })
         .finally(async () => {
-          await rm(inputDir, { recursive: true, force: true });
-          await rm(stagingDirectory, { recursive: true, force: true });
+          const cleanupResults = await Promise.allSettled([
+            rm(inputDir, { recursive: true, force: true }),
+            rm(stagingDirectory, { recursive: true, force: true }),
+          ]);
+          for (const result of cleanupResults) {
+            if (result.status === 'rejected') request.log.error({ error: result.reason }, 'Failed to clean up training files');
+          }
         });
       inputDirectory = null;
       return reply.code(202).send({ jobId, modelId });
