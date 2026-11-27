@@ -20,7 +20,8 @@ export function validateJpegDataUrl(dataUrl) {
 }
 
 export async function normalizeImage(buffer) {
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) throw new Error('Image exceeds size limit.');
+  if (!(Buffer.isBuffer(buffer) || buffer instanceof Uint8Array) || buffer.byteLength === 0) throw new Error('Image exceeds size limit.');
+  if (buffer.length > MAX_IMAGE_BYTES) throw new Error('Image exceeds size limit.');
   const source = sharp(buffer, { limitInputPixels: MAX_IMAGE_PIXELS, failOn: 'error' });
   const metadata = await source.metadata();
   if (!['jpeg', 'png', 'webp'].includes(metadata.format) || !metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_PIXELS) {

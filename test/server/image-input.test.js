@@ -11,3 +11,11 @@ test('normalizes a known image into channel-first RGB pixels scaled to zero thro
   assert.equal(image.values.length, 224 * 224 * 3);
   assert.ok(image.values.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
 });
+
+test('normalizes image bytes after worker structured cloning removes the Buffer prototype', async () => {
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 200, g: 100, b: 50 } } }).png().toBuffer();
+  const clonedBytes = new Uint8Array(png);
+  const image = await normalizeImage(clonedBytes);
+  assert.equal(image.values.length, 224 * 224 * 3);
+  assert.ok(image.values.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+});
