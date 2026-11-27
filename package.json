@@ -3,6 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "vite --host 127.0.0.1", "build": "vite build", "test": "node --test", "download-model": "node scripts/download-model.js" },
-  "dependencies": { "@tensorflow/tfjs": "^4.22.0", "@tensorflow-models/mobilenet": "^2.1.1", "vite": "^6.1.0" }
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"node server/index.js\"",
+    "server": "node server/index.js",
+    "build": "vite build",
+    "test": "node --test",
+    "download-model": "node scripts/download-model.js"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.1.9",
+    "@tensorflow-models/mobilenet": "^2.1.1",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "fastify": "^5.12.8",
+    "sharp": "^0.35.5",
+    "vite": "^6.1.0"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
 }
