@@ -51,6 +51,11 @@ async function tensorFromImage(buffer) {
 }
 
 async function train(payload, id) {
+  const rawBatchSize = process.env.FEATURE_BATCH_SIZE ?? '16';
+  const featureBatchSize = Number(rawBatchSize);
+  if (!/^\d+$/.test(rawBatchSize) || !Number.isInteger(featureBatchSize) || featureBatchSize < 1 || featureBatchSize > 16) {
+    throw new Error('FEATURE_BATCH_SIZE must be an integer from 1 to 16.');
+  }
   const tf = await getTensorFlow();
   const base = await getExtractor();
   const classes = payload.classes;
@@ -59,16 +64,23 @@ async function train(payload, id) {
   const all = [...split.training.map(x => ({ ...x, validation: false })), ...split.validation.map(x => ({ ...x, validation: true }))];
   let xs, ys, validationXs, validationYs, model, optimizer;
   try {
-  for (let i = 0; i < all.length; i++) {
-    const sample = all[i];
-    const buffer = await readFile(sample.example);
-    const input = await tensorFromImage(buffer);
+  for (let start = 0; start < all.length; start += featureBatchSize) {
+    const batch = all.slice(start, start + featureBatchSize);
+    const images = await Promise.all(batch.map(async sample => normalizeImage(await readFile(sample.example))));
+    const pixels = new Float32Array(images.length * 224 * 224 * 3);
+    images.forEach((image, index) => pixels.set(image.values.map(value => value * 255), index * 224 * 224 * 3));
+    const input = tf.tensor4d(pixels, [batch.length, 224, 224, 3]);
+    let embeddings = [];
     try {
-      const embedding = tf.tidy(() => base.infer(input, true).squeeze());
-      (sample.validation ? validation : training).push(embedding);
-      (sample.validation ? validationLabels : labels).push(sample.classIndex);
-    } finally { input.dispose(); }
-    send(id, 'progress', { phase: 'features', progress: Math.round((i + 1) * 100 / all.length), message: `Извлечение признаков ${i + 1}/${all.length}` });
+      embeddings = tf.tidy(() => tf.unstack(base.infer(input, true), 0));
+      for (let index = 0; index < batch.length; index++) {
+        const sample = batch[index];
+        (sample.validation ? validation : training).push(embeddings[index]);
+        embeddings[index] = null;
+        (sample.validation ? validationLabels : labels).push(sample.classIndex);
+      }
+    } finally { embeddings.forEach(tensor => tensor?.dispose()); input.dispose(); }
+    send(id, 'progress', { phase: 'features', progress: Math.round(Math.min(start + batch.length, all.length) * 100 / all.length), message: `Извлечение признаков ${Math.min(start + batch.length, all.length)}/${all.length}` });
   }
   if (!training.length) { validation.forEach(tensor => tensor.dispose()); throw new Error('Not enough examples to train; each class needs at least two images.'); }
   xs = tf.stack(training);
