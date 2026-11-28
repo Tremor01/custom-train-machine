@@ -87,14 +87,14 @@ export function createGameLifecycle() {
   return game;
 }
 
-export function createCameraStarter(getUserMedia, attachVideo) {
+export function createCameraStarter(getUserMedia, attachVideo, detachVideo = () => {}) {
   let pending = null;
   return function start() {
     if (pending) return pending;
     pending = (async () => {
       const stream = await getUserMedia();
       try { await attachVideo(stream); return stream; }
-      catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
+      catch (error) { detachVideo(stream); stream.getTracks().forEach(track => track.stop()); throw error; }
     })().finally(() => { pending = null; });
     return pending;
   };
